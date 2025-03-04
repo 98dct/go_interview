@@ -1,0 +1,846 @@
+1.go的包管理方式
+GOPATH  <go1.5  通过统一的包存放路径  不支持依赖包的版本控制
+GO vendor >= go1.5
+GO modules >= go1.11  go1.13 go modules默认启用
+
+GOROOT是GOlang安装目录
+GOPATH是go项目的工作空间
+
+开启go modules
+export GOMODULE=on  (linux)
+set GOMODULE=on  (windows)
+go env -w GO111Module=on
+
+不对依赖包做哈希校验
+1.GORPIVATE匹配到的包
+2.打包到vendor目录中的包
+3.GOSUMDB设置为off
+
+
+go.mod文件只包含直接依赖包和间接依赖包不含go.mod文件的版本
+go.sum包含构建用到的所有直接依赖包和间接依赖包的版本
+
+关闭依赖包校验
+go env -w GOSUMDB=off
+
+go modules模式下，依赖包存储在 $GOPATH/pkg/mod包下  这个路径下面可以包含依赖包的多个版本
+这样的好处：
+1.节省空间  多个go项目共用这些依赖
+2.提高构建速度  如果依赖已经缓存 不需要重复下载
+3.版本管理清晰  不同的依赖版本用一个目录表示，彼此互不影响
+
+随着时间推移，$GOPATH/pkg/mod 可能会存储许多不再使用的旧版本依赖。可以使用以下命令清理：
+go clean -modcache
+
+internal文件夹下的包只能被其父目录下的包或子包调用
+
+通过本地包导入
+go.mod中  replace github.com/xx.pkg ---> ../xx.pkg
+通过私有仓库导入
+GOPRIVATE是让指定的域名不走goproxy代理，也不进行go modules 包哈希校验
+GOPRIVATE=GONOPROXY+GONOSUMDB
+export GOPRIVATE=git.lianjia.com
+
+
+包加载顺序：
+同一个包内部：按文件首字母顺序加载文件，先加载一个文件中常量，变量，type类型声明，然后执行init函数，在依次加载下一个文件
+多个包依赖：先加载依赖包的文件，在加载本包的文件，顺序如上
+main包加载顺序：先加载依赖包，按照依赖包导入顺序加载，包内文件加载顺序按照首字母顺序
+文件加载顺序：
+引入的包--->常量--->变量--->type类型声明--->init()--->main()函数
+
+注意：
+init()函数随着包加载而加载，而且只会在包加载时执行一次！
+
+格式化输出：
+%T: 输出变量的类型
+%t: bool类型输出
+%v: 原来值输出
+%+v: 不仅输出结构体的字段名，还输出结构体的字段值
+%#v: 除了以上，还输出结构体的名字，以及字段中指针类型的名称
+
+读取外部输入(和命令行程序还不一样！)
+1.fmt.Scan(&aa)
+2.reader := bufio.NewReader(os.Stdin) ； text, _ := reader.ReadString('\n') // 读取到换行结束
+
+new和make的区别
+1.make不仅分配内存，还会初始化；new只会分配零值填充的值(如果用new创建map,slice,channel,则创建后变量为nil)
+2.make只能分配slice、map、channel；new没有限制
+3.make分配后返回原始类型(T)；new返回指向该类型零值的指针
+
+处理数值类型时需要关注
+1.值溢出问题
+1.1 无符号运算溢出，值为0
+// 安全运算
+if math.MathUint64 - x < y{
+    log.Fatal("overflow maxUint64...")
+}else{
+    res := x + y
+}
+1.2 有符号整数运算溢出，值出现反转(最大的负数)
+// 安全运算
+if (x > 0 && y > (math.MaxInt64-x)) || (y < 0 && x < (math.MinInt64-y)) || (y > 0 && x > (math.MaxInt64-y)) ||
+		(x < 0 && y < (math.MinInt64-x)) {
+		// 错误处理
+		log.Fatal("overflow int64")
+	} else {
+		sum := x + y
+		fmt.Println(sum)
+	}
+}
+1.3 浮点型溢出，为最大值
+x := math.MaxFloat64
+y := float64(1000)
+z := x + y
+fmt.Println("z:", z, "math.MaxFloat64:", x, x == z)
+
+2.精度问题
+2.1 类型转换丢失精度
+var x4 int32 = math.MaxInt32
+y4 := int16(x4)
+fmt.Println("y4:", y4)
+if (x4 < math.MinInt16) || (x4 > math.MaxInt16) {
+	// 错误处理
+}
+2.2 整数转换为无符号整数，考虑符号丢失问题
+var x5 int32 = math.MinInt32
+y5 := uint32(x5)
+fmt.Println("x5:", x5, "y5:", y5)
+if x5 < 0 {
+	// 错误处理
+}
+2.3 浮点数会有精度丢失问题！
+
+内存块在哪里开辟呢？
+内存开辟的位置由编译器决定！ 编译器会进行逃逸分析
+1.栈：一个与申请的内存块，由每个协程单独维护，1.19之前 初始值2KiB，1.19之后是自适应
+协程栈有尺寸限制，64位系统最大是512MiB
+开辟在栈上的内存块只能在协程内部使用，与其他协程隔离
+2.堆：
+包级别的变量都会分配到堆上
+
+栈上开辟内存的优势
+1.开辟内存更快
+2.不需要垃圾回收
+3.对cpu缓存更友好
+
+len: 数组、切片、channel
+cap: 数组、切片、map、channel、字符串
+
+浮点数可以比较，但是由于存在精度问题，不推荐浮点数作为map的key
+
+interface{}类型的可以比较？
+interface{}变量比较时，需要判断底层动态类型是否相等(_type/tab是否相等)以及data指针指向的内存空间所存储的数据值是否相同。
+
+go语言优雅的错误处理？
+1.使用errors.Wrap()或者errors.Wrapf()包装错误信息
+2.一般在程序的最外层才考虑将错误通过日志的形式记录到文件中或打印到终端！
+
+switch和case分支的数据类型必须保持一致！
+Go 的 switch 语句在匹配到一个 case 后不会自动执行后续 case，
+但如果加上 fallthrough，会强制执行下一个 case，不管下一个 case 条件是否匹配。
+
+defer使用场景：资源释放、异常捕获
+defer运行时底层是由链表形成的一个栈的结构，先执行链表尾部(栈顶)的defer函数
+defer与函数绑定，不同的defer栈之间相互独立
+defer结构体是在运行时动态创建的，因此defer栈的大小是不固定的，应该避免在单个函数中使用大量的defer语句，
+以免defer溢出
+runtime.deferproc()
+runtime.deferreturn()
+runtime.deferredFunc()
+
+defer后面的表达式
+参数变量与闭包变量的区别？
+参数变量：defer语句出现时，立即赋值
+闭包变量：按defer语句执行时，变量的值为准
+但是要注意指针、引用类型等！
+
+panic使用场景
+1.连不上数据库、redis或kafka，报一个panic
+2.公共组件、库，返回具体的err
+
+channel的使用避坑：
+1.阻塞: nil channel读写，channel缓冲区为空或者满了
+2.panic: send on closed channel、close of closed channel、close nil channel
+
+http server优雅退出
+1.使用信号监听 sigint sigterm
+2.server.shutdown() 关闭http server
+  2.1 停止接收新连接
+  2.2 清空空闲连接池
+  2.3 等待请求处理完成
+3.关闭redis、kafka、mysql、mongo等连接对象
+
+需要注意各个对象的依赖关系，以决定退出服务时先关闭哪个连接
+
+viper使用mapstructure作为序列化标签
+
+runtime提供的功能：goroutine、channel、GC、反射、调度器(scheduler)、与操作系统交互的功能
+
+脚本语言：python、php等语言不需要编译、通过解释器来执行源码、开发效率高、跨平台能力强、执行效率低、对硬件控制力弱
+go编译过程：源代码文件(main.go)-->编译器-->汇编程序main.s-->汇编器-->二进制文件main.o-->链接器-->可执行程序main.exe
+go编译细化过程：词法分析-->语法分析-->类型检查-->中间代码生成-->代码优化-->SSA生成-->机器码生成
+
+每个m都会绑定一个g0
+go程序启动过程？
+1.编译生成可执行文件--->2.启动，加载程序到内存中--->3.初始化运行时环境(调度器、内存分配器、垃圾回收器)
+-->4.执行runtime.main()-->5.执行用户的main()函数-->6.程序退出
+
+自动GC: 是开发者更关注业务代码，提升开发效率
+手动GC: 可以精准的手动管理内存，实现精致的机器性能
+c、c++手动GC; go、java、python自动GC
+
+GC实现方式：
+1.追踪式GC(根可达算法):从根对象出发，根据对象的引用关系一步步扫描整个堆，确定可回收的对象
+    根对象：全局变量、goroutine栈、寄存器
+    标记-清除
+    标记-整理
+    复制
+    分代
+    并发
+2.引用计数法
+
+goGC实现方式：
+无分代、不整理、并发(与用户代码并发执行)的三色标记清除算法
+go不使用分代GC的原因？
+1.go的逃逸分析特性使得分代式GC在go语言中没有优势
+2.go的tcmalloc内存分配算法(按照对象大小分配内存块)大大减少了内存碎片
+3.go的垃圾回收更注重垃圾回收与用户代码并发执行
+
+goGC的发展历程：
+go刚开始版本：秒级GC
+go1.5: 引入三色标记算法  并发mark、sweep 几十ms stw
+go1.8: ms级以下
+
+三色标记
+白色：未被垃圾回收器访问到的对象  根不可达对象  待扫描状态
+灰色：已被垃圾回收器访问到的对象，但其子对象还未被访问
+黑色：该对象及其子对象都被垃圾回收器访问 根可达对象
+三色标记的流程：
+1.从根节点开始遍历所有对象，将根对象放入灰色集合。
+2.遍历灰色集合 只遍历一层  将灰色对象可直达对象放入灰色集合 灰色对象放入黑色集合  往返重复。
+
+强三色不变式：
+不允许黑色对象引用白色对象
+弱三色不变式：
+允许黑色对象引用白色对象，但是需要满足一定的条件：
+这个白色对象必须存在其他灰色对象的引用；或者这个白色对象上游链路存在其他灰色对象
+
+屏障机制：程序执行过程中增加的额外判断的机制，满足一定条件就执行类似回调或钩子函数
+插入写屏障机制：在三色标记过程中，如果黑色对象下游引用了一个新对象，触发插入写屏障机制，将该新对象置为灰色。
+删除写屏障：在三色标记过程中，白色对象被删除时，触发删除写屏障，将该对象置为灰色。但会造成重复扫描。
+混合写屏障：go1.8之后引入了混合写屏障，避免了堆栈的重新扫描，大大减少了stw的时间，结合了插入写屏障和删除写屏障的优势。
+
+引入屏障机制是为了并发的三色标记，避免stw
+混合写屏障的几个规则：
+1.GC开始时优先扫描栈上的对象，并将可达对象全部标记为黑色
+2.当堆空间对象被删除时触发删除写屏障，即将删除的对象标记为灰色   等待下一轮GC回收
+3.当堆空间对象新增时触发插入写屏障，即将新增的对象标记为灰色  不让新增对象被GC回收
+
+优化GC
+1.调参GOGC环境变量
+2.优化代码。使用sync.Pool或其他缓存机制来复用对象、用值对象和指针对象做一个权衡、避免在热点代码中使用短生命周期的对象
+
+为什么用虚拟地址？
+1.直接使用物理地址会导致内存利用率低
+2.容易导致写冲突
+3.增加开发复杂度
+
+虚拟内存通过页表来实现  每一页大概4KB
+磁盘和主内存之间的置换也是通过页为单位来操作的
+虚拟地址到物理地址的映射由页表来记录
+
+go内存分配器：采用三层管理结构 mcache、mcentral、mheap
+mcache：
+    线程私有资源为单个线程服务；
+    go为每一个逻辑处理器p提供一个本地缓存mspan；
+    协程需要内存先从mcache中获取；
+    mcache包含所有大小规格的mspan，但每种规格只有一个；
+mcentral：
+    全局资源；
+    mcentral收集所有size class的span；
+    size class相同的所有span以链表形式组织在一起；
+    mcentral被所有逻辑处理器p共享；
+mheap：
+    一个数组，管理所有级别的mcentral；
+    大对象(32KB)直接通过mheap分配；
+
+go对象分配
+微小对象：<16B 使用mcache的tiny分配器分配
+小对象：16B-32KB 使用mcache中相应规格的mspan分配;没有的话找mcentral;在没有的话找mheap;在没有的话找操作系统
+大对象：>32KB 直接mheap分配
+
+goroutine调度时机
+1.主动调度  代码执行runtime.Gosched()   当前协程切换到g0，G与M解绑，G入全局队列
+2.被动调度  协程在休眠、channel阻塞、锁等待、执行垃圾回收暂停时让出执行机会 当前协程切换到g0 G与M解绑 G不入全局队列
+3.抢占调度  系统监控定时检测 运行过长或系统调用的协程被抢占  耗时>10ms 或 系统调用>20us
+
+网络轮询器、垃圾回收的一些goroutine也会放到全局runq
+
+goroutine阻塞的场景
+系统调用(syscall)、channel读写、锁等待、select等待、同步原语等待(waitgroup、cond)、垃圾回收、time.Sleep()
+
+字符串len()函数：字节的个数
+如果要获取字符个数：rune := []rune(str); len(rune)
+字符串底层是reflect.StringHeader结构体，有data、len两个字段
+unsafe.SizeOf(x)获取的是x类型的大小。
+
+字符串拼接方式对比
+1.+号
+2.fmt.Sprintf()
+3.bytes.Buffer
+4.strings.builder()
+5.[]byte
+6.strings.Join()
+
+字符串截取有可能导致内存泄漏，解决办法：string()、[]byte()、strings.Builder重新构造一个
+
+协程相比于线程的优势
+1.占用空间小 初始2KB go1.19开始自适应伸缩
+2.极大减少进程从用户态到内核态的切换
+3.切换成本低(完全在用户态进行，保存当前cpu寄存器状态，加载新的寄存器状态)  耗时200ns左右
+
+map的元素(key、value)为什么不能取址？
+map的扩容、重建会导致bucket元素地址变化，通过value指针访问或修改可能会导致不一致性！
+
+go中的原子操作支持的类型：
+int32、int64、uint32、uint64、uintptr
+unsafe.Pointer
+
+信号量：内部维护了一个计数器，用来表示可用资源的数量，线程访问共享资源需要信号量许可，访问完成资源
+需要释放信号量。信号量计数器为0表示没有可用的资源
+P操作：获取信号量，计数器大于0，则减1；等于0则等待
+V操作：释放信号量，将计数器+1，唤醒等待的协程
+
+debug.SetMaxThreads(): 设置go程序可以使用的最大操作系统线程数 默认是10000
+runtime.GOMAXPROCS(): 获取或设置逻辑处理器的数量  io密集型业务中设置p大于cpu核数，避免cpu空转
+debug.SetMaxStack(): 设置单个goroutine最大栈的大小，默认1GB
+
+控制map并发安全
+1.mutex+map(读与写差不多)、rwMutex+map(读大于写)
+2.sync.Map(读多、更新、删除多、插入写少)
+3.shard map分片锁 更高性能
+
+atomic提供的方法，第一个参数都需要传指针类型！
+
+悲观锁：认为并发冲突总是会发生，数据被访问就会被加锁
+乐观锁：假设冲突不会发生，对共享资源修改时不会先加锁，会先判断，如果数据已经被修改了，执行失败！(cas操作)
+
+乐观锁实现方式：
+cas、版本号
+
+goroutine的gmp调度模型在go1.14之前是协作式调度，监控线程会找一个合适的机会转让goroutine执行权
+在go1.14之后是基于信号的抢占式调度，一旦执行时长超过10ms转让goroutine执行权
+抢占式调度：定时器、信号处理、抢占检查
+
+
+mutex的两种模式
+正常模式：
+    所有等待锁的goroutine按照先进先出的顺序等待；
+    唤醒的goroutine不直接拥有锁，而会和新请求的goroutine竞争锁；
+    新请求的goroutine更容易抢占锁。
+饥饿模式：
+    直接由unlock把锁交给等待队列中排第一位的goroutine；
+    新goroutine不参与抢锁和自旋，直接进入等待队列的队尾。
+
+正常模式--饥饿模式：goroutine从阻塞队列出来，阻塞时间超过1ms，转为饥饿模式。
+饥饿模式--正常模式：goroutine从阻塞队列出来，阻塞时间小于1ms或者当前goroutine是阻塞队列中的最后一个goroutine,
+转为正常模式。
+
+
+channel优雅关闭：
+1.使用sync.Once 关闭
+2.关闭函数中使用defer func{if err := recover(); err != nil {} }
+3.使用closed标志位
+
+go test -v -run TestAddition
+go test xxx_test.go -bench . -benchtime=2s -benchmem -cpu 2,4,8
+go test -bench=BenchmarkF1
+
+pprof适合查看cpu花费在哪个函数上、内存分配在那哪个函数上
+trace适合查看在一段时间程序的goroutine、GC的执行情况。
+
+线上行为不开启GODEBUG环境变量（调度器行为分析、GC行为分析）
+
+怎样分析go代码的GC情况？
+1.GODEBUG环境变量  GODEBUG=gctrace=1
+2.runtime打印代码前后gc次数、gc暂停时间
+3.查看trace、pprof heap
+
+内存逃逸：
+编译期间由编译器决定的，与运行环境有关。
+无法确定生命周期、作用域的对象会分配到堆上；
+内存逃逸会影响程雪的性能，增加垃圾回收的负担。
+
+go build -gcflags "-m -l"  main.go定位逃逸
+
+go1.4之后由分段栈改为连续栈，如果栈的大小超过64KB，就会触发栈的扩容，会影响性能和内存管理，
+所以当对象超过64KB时，直接在堆上分配。
+
+大量的日志打印(log.Info()会调用fmt标准库函数)也会导致内存逃逸到堆上，可能会导致oom！
+
+常用类型值值尺寸：
+字符串：16字节
+指针：8字节
+切片：24字节
+map、channel：8字节
+函数：8字节
+接口：16字节
+
+优化json操作的性能
+1.使用更高性能的json序列化库  json-iterator这个第三方序列化库比标准库更优秀！
+2.避免使用map进行反序列化  反序列化时可以使用struct{}代替！ json.RawMessage{} 延迟解析！
+3.优化json标签和json结构
+
+
+mysql数据库相关：
+1.启用慢查日志
+Set global slow_query_log = "On"; (重启失效)
+配置文件配置slow_query_log=1 永久生效
+
+还要设置慢查文件：slow_query_log_file 和 慢查阈值：long_query_time
+
+2.binlog
+binlog是server层生成的二进制文件(mysqlbinlog工具)
+记录了所有数据库的更改操作(含表结构变更操作)
+binlog是追加写入，文件写到一定大小后，会轮转写到新文件中
+可以用来做数据备份、数据恢复、以及主从集群的数据同步
+
+3.redo log
+redo log是innodb引擎记录的物理日志，其他引擎没有
+记录的是在某个数据页上做了什么修改；
+用于数据库崩溃恢复(crash recover，崩溃时将未提交事务回滚，已提交事务持久化),保证事务的ACID
+redo log是事务级别的日志，一个事务执行完成才会写入到redo log
+redo log大小是固定的，循环写入
+
+4.undo log
+undo log是存储引擎层生成的日志，属于逻辑日志(insert、udpate、delete操作等)
+记录的是事务被修改前的旧值
+实现了事务的原子性，主要用于事务回滚和MVCC
+
+5.mysql为什么不实时写磁盘
+mysql以数据页为单位进行加载，一个事务可能只变更一个页的几个字节，如果加载整个页浪费磁盘IO，
+数据页在磁盘上不连续，随机IO性能差。
+
+6.mysql写数据流程
+先将数据更新到redo log，并更新内存中的数据页(buffer pool)。
+后台启动一个线程，将数据异步更新到磁盘中的数据页。
+
+7.为什么需要buffer pool?
+充当磁盘数据页的缓存(冷热分区的lru算法 7/3)
+将随机写磁盘的IO转换为顺序写日志，在异步批量将脏页刷新到磁盘上
+inno_buffer_pool_size默认是128M; innodb_page_size默认是16KB
+
+干净页通过lru链表保存；
+空闲页通过free链表保存；链表中每个节点是控制块，控制块中有页的地址
+脏页通过flush链表保存；链表每个节点是脏页的控制块
+
+8.redo log什么时候会将日志刷新到磁盘？
+事务提交、log_buffer空间不足、事务日志缓冲区满、检查点、后台刷新线程、正常关闭服务器
+red log默认大小是48M;
+redo log写满时会出触发检查点(checkpoint)，暂停写入、刷脏页、并循环利用redo log空间
+
+9.binlog的三种格式
+statement:记录的是sql原文，不需要记录每一行的变化，减少binlog日志量；但是在从库上重放binlog可能会导致不一样（now()函数等）
+row: 默认格式，记录的是每一行的改动，保证了binlog重放的准确性，但是会导致binlog日志量过大（alter table...）
+mixed:优先使用statement，无法重放的sql使用row格式。
+
+binlog无法实现 crash safe的能力
+
+10.两阶段提交(目的是确保同一个事务的bin log和 redo log的一致性！)
+1.start transaction 生成一个全局的事务编号trx_id;
+2.找到对应数据页，加载到内存buffer pool中，对数据进行修改，修改后变成脏页，记录redo log到redo log buffer中
+3.redo log buffer中trx_id=1的事务日志写到redo log文件中  prepare阶段
+4.将事务bin log缓存中的数据写到page 缓存中,并在合适时机刷盘。
+5.向redo log中写入一条数据end_trx=1 表示redo log事务完成  commit
+
+11.主从延迟的情况？
+1.主库执行了大事务
+2.主库或从库负载过高
+3.sql线程繁忙
+4.主从服务器时钟不一致
+5.主从存在网络延迟
+
+12.怎么解决主从延迟
+1.使用更高效的复制方式 mix
+2.增加从库的sql线程数
+3.减少事务的大小
+
+13.为什么使用主从架构？
+读写分离、负载均衡、冗余和备份
+
+14.mysql8.0废弃查询缓存的原因？
+1.查询缓存命中率不高
+2.查询缓存容易失效
+3.影响MYSQL服务的性能
+4.业务中的缓存技术已经成熟
+
+15.一个sql的执行过程
+1.连接器建立连接（认证、权限校验）
+2.校验查询缓存
+3.分析器（语法分析、词法分析）
+4.查询优化器（优化sql、选择索引、生成执行计划）
+5.执行器（与存储引擎交互）
+6.存储引擎
+
+16.索引
+索引的优点：
+
+索引的缺点：
+创建索引和维护索引要耗费时间；
+索引需要占用的额外的磁盘空间。
+
+mysql5.7开始行格式默认是：dynamic
+dynamic相比于compact格式，主要在溢出列上做了优化
+
+索引段：存放B+树非叶子节点区的集合
+数据段：存放B+树叶子结点区的集合
+回滚段：存放回滚数据区的集合
+
+索引的本质是数据页的目录！
+mysql的索引是存储在磁盘上的，先从磁盘上加载索引到内存，再根据索引找到数据，再从磁盘上加载数据到内存
+mysql B+树索引的优点：
+更少的磁盘IO完成查询；
+高效地查询某一个记录和范围的数据。
+
+17.B树和B+树的区别
+1.B树非叶子节点和叶子结点都也存储用户数据，增加磁盘的IO，也会导致查询的不稳定性，B+树只有叶子节点存储用户数据
+2.B+树更适合范围查找，只需扫描叶子节点即可，B树就需要中序遍历，增加磁盘IO。
+
+18.索引失效的情况？
+1.联合索引查询条件不满足最左前缀原则
+2.索引列使用函数或运算符
+3.隐式类型转换  where age = '18'  age是int类型
+4.在选择性比较差的字段上建立索引
+5.or条件存在非索引字段
+6.索引碎片过多
+7.数据表太小
+8.查询优化器估算错误(索引统计信息失效)
+
+19.索引使用规范？
+1.索引命名 uk_xxx、idx_xxx
+2.只为用于搜索、排序、分组的字段建立索引
+3.数字类型的字段更适合建立索引
+4.存储空间较小的字段适合建立索引
+5.高选择性字段适合建立索引
+6.更新频繁的字段不适合建立索引
+7.长字段使用前缀来建立索引
+8.限制索引的数量
+
+20.唯一索引和普通索引的区别？
+1.查询效率几乎相同
+2.写入效率  普通索引会使用change buffer机制，先将变动写入change buffer中，在合并到buffer pool
+唯一索引会加载磁盘数据到内存中进行校验
+
+21.mysql自增主键不连续的原因？
+1.事务回滚（手动回滚或失败回滚）
+2.唯一索引冲突
+3.删除记录
+
+主键int 范围
+int类型范围：-2^31---2^31-1   21亿多
+无符号整数类型：2^32-1
+
+22.mysql的count()函数？
+count()：统计的是不为NULL的记录数
+count(*)=count(1)>count(索引字段)>count(主键)>count(非索引字段)
+
+mysql中表记录一行最大长度64KB
+utf8mb4和utf8存储中文需要三个字节，emoJi表情包需要四个字节
+varchar(M)中M指的是字符的长度
+
+只有对表做增删改操作才会生成事务id。
+
+23.事务的特性
+A:原子性
+C:一致性
+I:隔离性
+D:持久性
+innodb如何保证ACID特性的？
+持久性：redo log
+原子性：undo log
+隔离性：MVCC和锁机制
+一致性：由原子性、持久性、隔离性保证
+
+24.并行事务带来的问题？
+脏读：一个事务读到另一个未提交事务修改过的数据
+不可重复读：在一个事务内前后两次读到的数据不一样  重点在于修改
+幻读：在一个事务内前后两次查询到的结果集条数不一样(通常是由于另一个事务新增、删除数据)
+
+25.事务的隔离级别
+读未提交：
+读已提交：可以避免脏读
+可重复读：可能导致幻读
+串行化：
+mysql默认的隔离级别：可重复读
+
+26.可重复读怎样最大限度避免幻读？
+快照读(普通select语句)：mvcc
+当前读(select...for update): next-key lock(记录锁、间隙锁)
+
+mvcc: 多版本并发控制  用于处理并发访问的机制
+在读写冲突时避免对读操作加锁。
+为什么需要mvcc?
+让读写事务和只读事务之间互不干扰；
+innodb使用undo log实现多版本并发控制
+mvcc工作原理：
+innodb每一个记录都会有一个隐藏列记录最近一次修改事务的id;
+事务只能访问事务id小于当前活跃事务中最小的事务id(即只能访问已经提交的事务)；
+事务更新数据，创建新版本，并将事务id更新到隐藏列中；
+
+读已提交：事务中每个语句执行前都会重新生成一个read view
+可重复读：启动事务时生成一个read view
+
+执行begin/start transaction后，在执行sql时，才真正开启事务；
+通过start transaction with consistent snapshot命令，立即启动事务。
+
+mysql数据行隐藏列：
+DB_ROW_ID 没有指定主键时生成；
+DB_TRX_ID 事务更新数据后生成；
+DB_ROLL_PTR  回滚指针
+
+27.mysql的锁
+：用来解决多事务的并发冲突问题
+读读：
+读写：读使用mvcc、写加写锁
+写写：
+innodb即支持表锁，又支持行锁
+
+锁按照数据操作类型分：
+读锁(共享锁)：不会阻塞读操作，只阻塞写操作。
+写锁(排他锁)：阻塞其他读锁和写锁。
+
+按照数据操作的粒度分：
+库级锁(全局锁)
+表锁(S、X、IS、IX、AUTO-INC锁，Metadata lock)
+表锁会阻塞行锁。
+    1.元数据锁：MDL 一般不需要手动添加
+    当要对表数据做增删改查操作时，加MDL读锁；对表结构做变更操作时，加MDL写锁。
+    server层实现的表锁；
+    执行一些DDL语句时用来阻塞其他读写操作。
+    2.auto_incr锁：表锁，确保自增主键自增值的并发安全；执行完插入语句就释放，不会等到事务结束才释放；
+    后优化为轻量级auto_incr锁，只对自增主键变量赋值加锁，而不对插入语句加锁，减少加锁的范围。
+行锁(记录锁、临键锁、间隙锁、插入意向锁)
+    行锁：存储引擎实现；
+    什么时候加行锁？更新、删除操作时自动给 “行” 加排他锁； select ... for update 手动加排他锁
+一致性读：也叫快照读，普通select语句在读已提交、可重复读隔离级别下；一致性读不会对表中任何记录加锁
+当前读：也叫锁定读，包含共享锁(S)、排他锁(X)，统称记录锁，LOCK_REC_NOT_GAP
+
+间隙锁：
+innodb为了解决新增数据导致的幻读现象;只在可重复读隔离级别下生效  加锁范围：()
+临键锁：Next-Key Lock  可重复读隔离级别下才支持  为了解决幻读问题
+临键锁是Record Lock和 Gap Lock的组合，锁住记录所在的间隙，同时锁住加锁数据  加锁范围:(,]
+
+innodb的加锁单位是临键锁，加锁对象是索引
+
+按照操作性能分：
+乐观锁：记录数据版本提交时才会进行冲突检测  适用于读多写少 否则会进行多次重试！
+select id, status, version from order where id = 10
+update order set status = 1, version =version+1 where id = 10 and version = 1 更新时再次判断版本是否更改了
+
+悲观锁：innodb内部的全局锁、表锁、行锁（包含共享锁、排他锁）
+
+28.sql加锁规则
+select ... from 不加锁
+select ...from lock in share mode 加IS锁和S临键锁或S记录锁
+select ...from for update 加IX锁和X临键锁或X记录锁
+update ...where 加IX锁和X临键锁或X记录锁
+delete ...where 加IX锁和X临键锁或X记录锁
+
+29.如何优化锁？
+选择合适的事务隔离级别；
+并发冲突少的情况下使用乐观锁；
+减少锁定时间(不需要加锁的语句不放在事务中)；
+减少锁的范围；
+分页查询；
+优化sql语句。
+
+更新、删除数据时，没有命中索引，全表扫描时会对全部数据加临键锁(X)。
+force index强制优化器使用目标索引
+
+29.哪些情况下使用当前读？
+select ... for update
+select ... lock in share mode
+串行化(Serializable)隔离级别下，普通select会加共享读锁
+insert、update、delete
+
+30.explain 核心字段
+table: 表名
+type: 针对单表访问方法
+possible_keys: 可能用到的索引
+key: 实际用到的索引
+key_len: 实际用到的索引的长度  以索引的最大长度计算
+rows: 预估需要读取记录的条数
+filtered: 某个表经搜索条件过滤后，剩余记录条数的百分比  filtered越大索引的过滤性越好
+extra: 一些额外的信息
+
+select * from t1 union select * from t2
+union关键字去重，会生成临时表
+select * from t1 union all select * from t2
+union all关键字不去重，不生成临时表；
+
+distinct、group by、union在没有命中索引时会使用临时表  using temporary
+order by 没有命中索引时，会使用using filesort 使用内存或磁盘排序
+
+
+31.mysql深度分页的问题？
+1.使用一个id上一批次的最后一个数据
+2.使用覆盖索引 + 拆分sql
+select id from user where name like "Name%" order by name limit 1000000,10
+select * from user where id in ($ids)
+
+32.表设计建议
+1.尽量让数据库占用更小的磁盘空间(字段)
+2.尽量使用NOT NULL  因为null需要使用额外的存储空间；null使得索引、索引统计、值比较都复杂
+3.为字段设置默认值
+4.只创建必要的索引
+5.DATE需要频繁比较的话，尽量保存为unsigned int类型
+
+redis相关
+1.redis持久化方式？
+RDB: RDB持久化通过创建数据的快照(snapshot)实现，记录某个瞬间内存的数据
+开启RDB:
+redis-conf中  save 900 1  900s内至少发生一次修改；save 300 10 300s内至少发生10次修改
+关闭RDB:
+redis-conf中 save ""
+RDB是一个经过压缩的二进制文件可以用于备份、数据迁移、灾难恢复
+RDB优点：生成的文件紧凑、高效、适合备份
+缺点：RDB快照操作很重，生成快照不能执行太频繁、在备份间隔生成的数据可能会丢失
+
+AOF:
+AOF写操作会记录每一个写操作的命令，RDB在恢复数据时更快，只需加载到内存即可。
+AOF三种落盘方式：
+always: 每执行一条命令，就写入磁盘
+everysec(默认): 先写操作系统内核缓冲区，每秒写磁盘
+no: 完全由操作系统控制写入的时机
+AOF优点:确保每个数据都被写入
+缺点：AOF文件比较大，对性能影响大于RDB
+AOF重写，对命令进行合并
+
+AOF文件过大的影响？
+数据恢复慢、浪费磁盘
+
+AOF开启：
+appendonly yes
+appendfilename "appendonly.aof"
+混合方式，兼顾RDB和AOF方式
+
+2.缓存击穿、缓存穿透、缓存雪崩
+缓存击穿：redis某个热点数据失效、大量请求没有命中热点数据直接请求数据库，从而导致数据库过载。
+怎么避免缓存击穿？
+热点数据永不过期、分布式锁避免热点数据重复请求数据库、使用二级缓存、双key
+
+缓存穿透：大量请求访问缓存中不存在的数据，进而直接访问数据库
+解决办法：
+限制非法请求、对空值进行缓存、使用布隆过滤器做存在性判断
+
+缓存雪崩：
+大量缓存数据在同一时间过期，而导致大量请求访问数据库
+随机化过期时间、singleflight拦截同一key
+
+3.redis过期删除策略和内存淘汰策略
+过期删除策略：
+惰性删除：访问到过期键时在删除
+周期性删除：周期性扫描并删除（遍历所有db，从db中设置过期时间key的集合中随机检查20个key,
+删除随机检查中发现的所有过期key, 25%以上的key过期，会重复执行以上步骤，否则遍历下一个db）
+
+内存淘汰策略：
+LRU：淘汰最近最少使用的键值对
+LFU：淘汰最不经常使用的键值对
+random：随机选择
+TTL：
+
+noeviction: 不淘汰、拒绝写入
+allkeys-lru: 淘汰所有key中最近最少使用的
+allkeys-lfu: 淘汰所有key中最少使用的
+allkeys-random: 随机淘汰所有key
+volatile-lru: (线上使用) 设置过期时间的key  最近最少使用的
+volatile-lfu: 设置过期时间的key  最少使用的 （lfu记录访问次数，根据访问次数淘汰最少访问的key）
+volatile-random: 设置过期时间的key  随机淘汰
+volatile-ttl: 设置过期时间的key  选择剩余存活时间最少的key进行淘汰
+
+4.redis持久化对过期键值的处理
+RDB: 主服务器不会复制过期键值数据；从服务器同步快照数据时，不会检查过期数据
+AOF: aof重写时会删除过期数据，主服务器删除过期数据时会向从服务器发送DEL命令；
+从服务器不对过期数据进行处理，完全依赖主服务器。
+
+5.redis的大key有何影响?
+大key的标准：val值大于1m或者集合元素大于10000个
+大key的影响：
+    1.占用过多的内存资源；
+    2.影响redis服务的性能；
+    3.容易导致网路拥堵；
+    4.主从同步延时
+
+6.如何处理大key:
+    1.拆分大key成小key（转换为hash存储）；
+    2.使用unlink删除大key；
+    3.对大key设置更短的过期时间；
+    4.定期扫描大key并删除（通过scan命令遍历 scan cursor Match pattern Count count）;
+    5.大key经过gzip压缩后在存储到redis中
+
+7.缓存与数据库的一致性方案
+cache Aside: 旁路缓存
+更新缓存时，采用延迟双删：先删缓存、在删数据库、休眠一段时间，在删除缓存
+更新缓存时，采用先更新数据库，在删除缓存。
+如何确保缓存删除成功？
+1.业务代码进行一定程度的重试
+2.删除失败向mq一条消息，在消费端重试
+3.使用canal伪装成mysql从节点，发送dump请求，监听binlog，异步删除，降低耦合。
+
+kafka相关
+消息中间件的作用？
+解耦、缓冲(流控、削峰添谷)、异步处理
+kafka高吞吐的原因？
+1.顺序写磁盘
+2.页缓存
+3.零拷贝技术
+4.微批机制(攒多条消息一起发送到服务端)
+5.数据压缩
+6.分布式架构
+
+topic消息偏移量在早期保存在zk中，高版本保存在topic(_consumer_offsets)中
+分区的好处：提供负载均衡的能力，实现系统的高伸缩性。
+分区策略（一般使用轮询或者哈希策略）：
+轮询(round-robin);
+随机策略(random);
+哈希策略(可以实现有序性);
+
+当一条消息被ISR(in sync replicas)列表中的所有分区副本写入后，这条消息才会认为已提交，才能被消费者消费
+
+1.触发rebalance的条件
+消费者组成员个数发生变化；
+订阅的topic的分区数发生变化；
+
+2.rebalance的过程
+2.1 为每个消费者组指定一个group coordinator（是一个broker 负责管理消费者组重平衡的过程）
+2.2 group coordinator收到所有的join group的请求后，选举group leader
+2.3 group leader负责为组内其他成员分配分区，并将分配信息返回给group coordinator
+2.4 同步分区信息
+
+go的sdk sarama包在topic扩分区(减少分区)、_consumer_offsets topic发生迁移(broker重启)时会发生异常，导致消费者组成员
+被踢出消费者组，开始发生消费积压。
+
+幂等生产者、事务生产者  在producer的config配置一些参数、
+它们都可以避免发送重复的消息给kafka服务端
+
+3.kafka怎样保证消息可靠性？
+3.1 多分区副本机制
+3.2 生产者ack机制
+
+4.重复消费的情况
+4.1 消费者在未提交offset时重启、宕机
+4.2 自动提交消费位移
+
+5.怎么避免重复消费？
+5.1 幂等生产者
+5.2 手动提交offset
+5.3 业务侧通过mongo存储traceId
+
+rebalance会造成短暂的停止消费
+
+微服务相关
+1.
+
+Linux相关
+1.
